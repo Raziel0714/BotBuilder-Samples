@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-const { ActivityTypes, MessageFactory } = require('botbuilder');
+const { ActivityHandler, MessageFactory } = require('botbuilder');
 
 const ENGLISH_LANGUAGE = 'en';
 const SPANISH_LANGUAGE = 'es';
@@ -11,30 +11,33 @@ const DEFAULT_LANGUAGE = ENGLISH_LANGUAGE;
  * A simple bot that captures user preferred language and uses state to configure
  * user's language preference so that middleware translates accordingly when needed.
  */
-class MultilingualBot {
+class MultilingualBot extends ActivityHandler {
     /**
      * Creates a Multilingual bot.
      * @param {Object} userState User state object.
      * @param {Object} languagePreferenceProperty Accessor for language preference property in the user state.
+     * @param {any} logger object for logging events, defaults to console if none is provided
      */
-    constructor(userState, languagePreferenceProperty) {
-        this.languagePreferenceProperty = languagePreferenceProperty;
-        this.userState = userState;
-    }
+    constructor(userState, languagePreferenceProperty, logger) {
+        super();
+        if (!userState) throw new Error('[MultilingualBot]: Missing parameter. userState is required');
+        if (!languagePreferenceProperty) throw new Error('[MultilingualBot]: Missing parameter. languagePreferenceProperty is required');
+        if (!logger) {
+            logger = console;
+            logger.log('[MultilingualBot]: logger not passed in, defaulting to console');
+        }
 
-    /**
-     * Every conversation turn for our MultilingualBot will call this method.
-     * There are no dialogs used, since it's "single turn" processing, meaning a single request and
-     * response, with no stateful conversation.
-     * @param {Object} turnContext A TurnContext instance containing all the data needed for processing this conversation turn.
-     */
-    async onTurn(turnContext) {
-        // See https://aka.ms/about-bot-activity-message to learn more about the message and other activity types.
-        if (turnContext.activity.type === ActivityTypes.Message) {
-            const text = turnContext.activity.text;
+        this.userState = userState;
+        this.languagePreferenceProperty = languagePreferenceProperty;
+        this.logger = logger;
+
+        this.onMessage(async (context, next) => {
+            this.logger.log('Running dialog with Message Activity.');
+
+            const text = context.activity.text;
 
             // Get the user language preference from the user state.
-            const userLanguage = await this.languagePreferenceProperty.get(turnContext, DEFAULT_LANGUAGE);
+            const userLanguage = await this.languagePreferenceProperty.get(context, DEFAULT_LANGUAGE);
 
             if (isLanguageChangeRequested(text, userLanguage)) {
                 // If the user requested a language change through the suggested actions with values "es" or "en",
@@ -42,18 +45,21 @@ class MultilingualBot {
                 // The translation middleware will catch this setting and translate both ways to the user's
                 // selected language.
                 // If Spanish was selected by the user, the reply below will actually be shown in spanish to the user.
-                await this.languagePreferenceProperty.set(turnContext, text);
-                await turnContext.sendActivity(`Your current language code is: ${ text }`);
+                await this.languagePreferenceProperty.set(context, text);
+                await context.sendActivity(`Your current language code is: ${ text }`);
             } else {
                 // Show the user the possible options for language. The translation middleware
                 // will pick up the language selected by the user and
                 // translate messages both ways, i.e. user to bot and bot to user.
                 // Create an array with the supported languages.
-                const reply = MessageFactory.suggestedActions([SPANISH_LANGUAGE, ENGLISH_LANGUAGE], `Choose your language:`);
-                await turnContext.sendActivity(reply);
+                const reply = MessageFactory.suggestedActions([ENGLISH_LANGUAGE, SPANISH_LANGUAGE], `Choose your language:`);
+                await context.sendActivity(reply);
             }
-            await this.userState.saveChanges(turnContext);
-        }
+
+            // By calling next() you ensure that the next BotHandler is run.
+            this.userState.saveChanges(context);
+            await next();
+        });
     }
 }
 

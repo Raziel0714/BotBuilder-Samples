@@ -1,53 +1,53 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+const { ActivityHandler } = require('botbuilder');
 const fetch = require('node-fetch');
 
 const ENGLISH_LANGUAGE = 'en';
 const SPANISH_LANGUAGE = 'es';
 const DEFAULT_LANGUAGE = ENGLISH_LANGUAGE;
 
-class TranslatorMiddleware {
+class TranslatorMiddleware extends ActivityHandler {
     /**
      * Creates a translation middleware.
      * @param {BotStatePropertyAccessor} languagePreferenceProperty Accessor for language preference property in the user state.
      * @param {string} translatorKey Microsoft Text Translation API key.
      */
     constructor(languagePreferenceProperty, translatorKey) {
+        super();
+        if (!languagePreferenceProperty) throw new Error('[TranslatorMiddleware]: Missing parameter. languagePreferenceProperty is required');
+        if (!translatorKey) throw new Error('[TranslatorMiddleware]: Missing parameter. translatorKey is required');
+
         this.languagePreferenceProperty = languagePreferenceProperty;
         this.translatorKey = translatorKey;
+
+        this.onTurn = this.onTurn.bind(this);
     }
 
-    /**
-     * Called via BotAdapter.runMiddleware(), this method adds handlers to the TurnContext's sendActivities method to
-     * translate the outgoing text.
-     * @param {TurnContext} turnContext A TurnContext instance containing all the data needed for processing this conversation turn.
-     * @param {Function} next The next middleware or business logic of the bot to run.
-     */
-    async onTurn(turnContext, next) {
-        if (turnContext.activity.type === 'message') {
-            const userLanguage = await this.languagePreferenceProperty.get(turnContext, DEFAULT_LANGUAGE);
+    async onTurn(context, next) {
+        const userLanguage = await this.languagePreferenceProperty.get(context, DEFAULT_LANGUAGE);
+        const shouldTranslate = userLanguage !== DEFAULT_LANGUAGE;
+
+        if (shouldTranslate) {
+            context.activity.text = await this.translate(context.activity.text, DEFAULT_LANGUAGE);
+        }
+
+        context.onSendActivities(async (context, activities, next) => {
+            // Translate messages sent to the user to user language
+            const userLanguage = await this.languagePreferenceProperty.get(context, DEFAULT_LANGUAGE);
             const shouldTranslate = userLanguage !== DEFAULT_LANGUAGE;
 
             if (shouldTranslate) {
-                turnContext.activity.text = await this.translate(turnContext.activity.text, DEFAULT_LANGUAGE);
-            }
-
-            turnContext.onSendActivities(async (context, activities, next) => {
-                // Translate messages sent to the user to user language
-                const userLanguage = await this.languagePreferenceProperty.get(turnContext, DEFAULT_LANGUAGE);
-                const shouldTranslate = userLanguage !== DEFAULT_LANGUAGE;
-
-                if (shouldTranslate) {
-                    for (const activity of activities) {
-                        activity.text = await this.translate(activity.text, userLanguage);
-                    }
+                for (const activity of activities) {
+                    activity.text = await this.translate(activity.text, userLanguage);
                 }
-                await next();
-            });
-        }
+            }
+            await next();
+        });
+        // By calling next() you ensure that the next BotHandler is run.
         await next();
-    }
+    };
 
     /**
      * Helper method to translate text to a specified language.
